@@ -64,29 +64,38 @@ func New(logCtx logger.Info, logger log.Logger) (logger.Logger, error) {
 
 // Log implements `logger.Logger`
 func (l *loki) Log(m *logger.Message) error {
-	l.mutex.RLock()
-	defer l.mutex.RUnlock()
+    l.mutex.RLock()
+    defer l.mutex.RUnlock()
 
-	if l.closed {
-		return errors.New("client closed")
-	}
+    if l.closed {
+        return errors.New("client closed")
+    }
 
-	if len(bytes.Fields(m.Line)) == 0 {
-		return nil
-	}
-	lbs := l.labels.Clone()
-	if m.Source != "" {
-		lbs["source"] = model.LabelValue(m.Source)
-	}
-	l.handler.Chan() <- api.Entry{
-		Labels: lbs,
-		Entry: logproto.Entry{
-			Timestamp: m.Timestamp,
-			Line:      string(m.Line),
-		},
-	}
-	return nil
+    if len(bytes.Fields(m.Line)) == 0 {
+        return nil
+    }
+    lbs := l.labels.Clone()
+    if m.Source != "" {
+        lbs["source"] = model.LabelValue(m.Source)
+    }
+
+    select {
+    case l.handler.Chan() <- api.Entry{
+        Labels: lbs,
+        Entry: logproto.Entry{
+            Timestamp: m.Timestamp,
+            Line:      string(m.Line),
+        },
+    }:
+        // The send operation was successful.
+    default:
+        // The send operation would have blocked. Handle this case appropriately.
+        return errors.New("channel is blocked, unable to send log message")
+    }
+
+    return nil
 }
+
 
 // Log implements `logger.Logger`
 func (l *loki) Name() string {
